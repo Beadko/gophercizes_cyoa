@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -20,10 +19,8 @@ func main() {
 		return
 	}
 
-	d := json.NewDecoder(f)
-
-	var story cyao.Story
-	if err := d.Decode(&story); err != nil {
+	story, err := cyao.JSONStory(f)
+	if err != nil {
 		fmt.Printf("Could not parse the struct from %s: %v\n", *fileName, err)
 		return
 	}
