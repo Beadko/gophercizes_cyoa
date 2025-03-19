@@ -27,7 +27,6 @@ func main() {
 		fmt.Printf("Could not parse the struct from %s: %v\n", *fileName, err)
 		return
 	}
-
 	h := cyoa.NewHandler(story)
 	fmt.Printf("Starting the server on port: %d\n", *port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), h))

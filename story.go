@@ -9,6 +9,29 @@ import (
 	"text/template"
 )
 
+type Story map[string]Chapter
+
+type Chapter struct {
+	Title      string   `json:"title"`
+	Paragraphs []string `json:"story"`
+	Options    []Option `json:"options"`
+}
+
+type Option struct {
+	Text    string `json:"text"`
+	Chapter string `json:"arc"`
+}
+
+func JSONStory(r io.Reader) (Story, error) {
+	d := json.NewDecoder(r)
+
+	var story Story
+	if err := d.Decode(&story); err != nil {
+		return nil, err
+	}
+	return story, nil
+}
+
 func init() {
 	tmpl = template.Must(template.New("").Parse(defaultHandlerTmpl))
 }
@@ -79,31 +102,25 @@ var defaultHandlerTmpl = `
 </body>
 </html>`
 
-type Story map[string]Chapter
+type HandlerOption func(h *handler)
 
-type Chapter struct {
-	Title      string   `json:"title"`
-	Paragraphs []string `json:"story"`
-	Options    []Option `json:"options"`
-}
-
-type Option struct {
-	Text    string `json:"text"`
-	Chapter string `json:"arc"`
-}
-
-func JSONStory(r io.Reader) (Story, error) {
-	d := json.NewDecoder(r)
-
-	var story Story
-	if err := d.Decode(&story); err != nil {
-		return nil, err
+func WithTemplate(t *template.Template) HandlerOption {
+	return func(h *handler) {
+		h.t = t
 	}
-	return story, nil
 }
 
 type handler struct {
 	s Story
+	t *template.Template
+}
+
+func NewHandler(s Story, opts ...HandlerOption) http.Handler {
+	h := handler{s, tmpl}
+	for _, opt := range opts {
+		opt(&h)
+	}
+	return h
 }
 
 func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -114,15 +131,11 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p = p[1:]
 
 	if ch, ok := h.s[p]; ok {
-		if err := tmpl.Execute(w, ch); err != nil {
+		if err := h.t.Execute(w, ch); err != nil {
 			log.Printf("Error executing story %s: %v", h.s["intro"], err)
 			http.Error(w, "Something went wrong...", http.StatusInternalServerError)
 		}
 		return
 	}
 	http.Error(w, "Chapter not found.", http.StatusNotFound)
-}
-
-func NewHandler(s Story) http.Handler {
-	return handler{s}
 }
