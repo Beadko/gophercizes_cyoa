@@ -1,12 +1,15 @@
 package cyoa
 
 import (
+	"bufio"
 	"encoding/json"
-	"io"
+	"fmt"
+	"html/template"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
-	"text/template"
 )
 
 type Story map[string]Chapter
@@ -22,8 +25,12 @@ type Option struct {
 	Chapter string `json:"arc"`
 }
 
-func JSONStory(r io.Reader) (Story, error) {
-	d := json.NewDecoder(r)
+func LoadStory(fileName string) (Story, error) {
+	f, err := os.Open(fileName)
+	if err != nil {
+		return nil, err
+	}
+	d := json.NewDecoder(f)
 
 	var story Story
 	if err := d.Decode(&story); err != nil {
@@ -32,75 +39,70 @@ func JSONStory(r io.Reader) (Story, error) {
 	return story, nil
 }
 
-func init() {
-	tmpl = template.Must(template.New("").Parse(defaultHandlerTmpl))
+func PlayStory(story Story) error {
+	sc := bufio.NewScanner(os.Stdin)
+
+	for {
+		playChapters(story, sc)
+		fmt.Println("\nWould you like to play again?")
+		fmt.Println("1. Yes, let's do this!")
+		fmt.Println("2. No, I'm bored now")
+
+		fmt.Print("\nEnter your choice (1-2): ")
+		if !sc.Scan() {
+			return fmt.Errorf("Error reading input.")
+		}
+
+		choice := sc.Text()
+		if choice != "1" {
+			fmt.Println("Thanks for playing!")
+			return nil
+		}
+	}
 }
 
-var tmpl *template.Template
+func playChapters(story Story, sc *bufio.Scanner) error {
+	start := "intro"
 
-var defaultHandlerTmpl = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Choose Your Own Adventure</title>
-</head>
-<body>
-    <h1>{{.Title}}</h1>
-    {{range .Paragraphs}}
-    <p>{{.}}</p>
-    {{end}}
-    <ul>
-        {{range .Options}}
-            <li><a href="/{{.Chapter}}">{{.Text}}</a></li>
-        {{end}}
-    </ul>
-	<style>
-	        body {
-            font-family: 'Georgia', serif;
-            background-color: #121212;
-            color: #f5f5f5;
-            text-align: center;
-            margin: 0;
-            padding: 20px;
-        }
-        h1 {
-            font-size: 2.5em;
-            margin-bottom: 20px;
-            text-shadow: 2px 2px 5px rgba(255, 255, 255, 0.2);
-        }
-        p {
-            font-size: 1.2em;
-            line-height: 1.6;
-            max-width: 800px;
-            margin: 0 auto 20px;
-            padding: 0 15px;
-        }
-        ul {
-            list-style: none;
-            padding: 0;
-        }
-        li {
-            margin: 15px 0;
-        }
-        a {
-            display: inline-block;
-            background: #0077cc;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 5px;
-            text-decoration: none;
-            font-weight: bold;
-            transition: background 0.3s ease, transform 0.2s;
-        }
-        a:hover {
-            background: #0055aa;
-            transform: scale(1.05);
-        }
-	</style>
-</body>
-</html>`
+	for {
+		ch, exists := story[start]
+		if !exists {
+			return fmt.Errorf("Error: Chapter '%s' is not found", start)
+		}
+		fmt.Printf("\n%s\n", strings.ToUpper(ch.Title))
+		fmt.Println(strings.Repeat("-", len(ch.Title)))
+
+		for _, paragraph := range ch.Paragraphs {
+			fmt.Println(paragraph)
+			fmt.Println()
+		}
+
+		if len(ch.Options) == 0 {
+			fmt.Println("THE END")
+			return nil
+		}
+		fmt.Println("What would you like to do?")
+		for i, option := range ch.Options {
+			fmt.Printf("%d. %s\n", i+1, option.Text)
+		}
+
+		for {
+			fmt.Print("\nEnter your choice (1-" + strconv.Itoa(len(ch.Options)) + "): ")
+			if !sc.Scan() {
+				fmt.Println("Error reading input.")
+				return nil
+			}
+			input := sc.Text()
+			choice, err := strconv.Atoi(input)
+			if err != nil || choice < 1 || choice > len(ch.Options) {
+				fmt.Printf("Please enter a number between 1 and %d.\n", len(ch.Options))
+				continue
+			}
+			start = ch.Options[choice-1].Chapter
+			break
+		}
+	}
+}
 
 type HandlerOption func(h *handler)
 
@@ -122,16 +124,22 @@ type handler struct {
 	pathFn func(r *http.Request) string
 }
 
-func defaultPathFn(r *http.Request) string {
-	p := strings.TrimSpace(r.URL.Path)
-	if p == "" || p == "/" {
-		p = "/intro"
+func PathFn(base string) func(r *http.Request) string {
+	return func(r *http.Request) string {
+		p := strings.TrimSpace(r.URL.Path)
+		p = strings.TrimPrefix(p, base)
+		p = strings.Trim(p, "/")
+
+		if p == "" {
+			p = "intro"
+		}
+
+		return p
 	}
-	return p[1:]
 }
 
-func NewHandler(s Story, opts ...HandlerOption) http.Handler {
-	h := handler{s, tmpl, defaultPathFn}
+func NewHandler(s Story, t *template.Template, opts ...HandlerOption) http.Handler {
+	h := handler{s, t, PathFn("/")}
 	for _, opt := range opts {
 		opt(&h)
 	}
