@@ -22,14 +22,14 @@ func main() {
 	flag.Parse()
 	fmt.Printf("Using the story %s.\n", *fileName)
 
-	story, err := cyoa.LoadStory(*fileName)
+	story, start, err := cyoa.LoadStory(*fileName)
 	if err != nil {
 		fmt.Printf("Could not parse the struct from %s: %v\n", *fileName, err)
 		return
 	}
 	if *cli {
 		fmt.Printf("Starting CLI version of Create Your Own Adventure")
-		if err := cyoa.PlayStory(story); err != nil {
+		if err := cyoa.PlayStory(story, start); err != nil {
 			fmt.Printf("Could not play a story '%s': %v", story, err)
 		}
 
@@ -38,7 +38,7 @@ func main() {
 		if err != nil {
 			fmt.Printf("Could not parse the template file %s: %s.\n", *templateFile, err)
 		}
-		h := cyoa.NewHandler(story, tmpl, cyoa.WithPathFunc(cyoa.PathFn(basePath)))
+		h := cyoa.NewHandler(story, tmpl, start)
 		fmt.Printf("Starting the server on port: %d\n", *port)
 		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), h))
 	}

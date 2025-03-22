@@ -25,25 +25,55 @@ type Option struct {
 	Chapter string `json:"arc"`
 }
 
-func LoadStory(fileName string) (Story, error) {
-	f, err := os.Open(fileName)
+func LoadStory(fileName string) (Story, string, error) {
+	fileContent, err := os.ReadFile(fileName)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	d := json.NewDecoder(f)
 
 	var story Story
-	if err := d.Decode(&story); err != nil {
-		return nil, err
+	if err := json.Unmarshal(fileContent, &story); err != nil {
+		return nil, "", err
 	}
-	return story, nil
+
+	start := FindStartingChapter(story)
+	if start == "" {
+		return nil, "", fmt.Errorf("error: story has no chapters")
+	}
+
+	return story, start, nil
 }
 
-func PlayStory(story Story) error {
+func FindStartingChapter(story Story) string {
+	if _, exists := story["intro"]; exists {
+		return "intro"
+	}
+
+	linkedCh := make(map[string]bool)
+	for _, ch := range story {
+		for _, option := range ch.Options {
+			linkedCh[option.Chapter] = true
+		}
+	}
+	var startChs []string
+	for chName := range story {
+		if !linkedCh[chName] {
+			startChs = append(startChs, chName)
+		}
+	}
+
+	if len(startChs) == 1 {
+		return startChs[0]
+	}
+
+	return ""
+}
+
+func PlayStory(story Story, start string) error {
 	sc := bufio.NewScanner(os.Stdin)
 
 	for {
-		playChapters(story, sc)
+		loadChapters(story, sc, start)
 		fmt.Println("\nWould you like to play again?")
 		fmt.Println("1. Yes, let's do this!")
 		fmt.Println("2. No, I'm bored now")
@@ -61,13 +91,13 @@ func PlayStory(story Story) error {
 	}
 }
 
-func playChapters(story Story, sc *bufio.Scanner) error {
-	start := "intro"
+func loadChapters(story Story, sc *bufio.Scanner, start string) error {
+	currentChapter := start
 
 	for {
-		ch, exists := story[start]
+		ch, exists := story[currentChapter]
 		if !exists {
-			return fmt.Errorf("Error: Chapter '%s' is not found", start)
+			return fmt.Errorf("error: chapter '%s' not found", start)
 		}
 		fmt.Printf("\n%s\n", strings.ToUpper(ch.Title))
 		fmt.Println(strings.Repeat("-", len(ch.Title)))
@@ -98,7 +128,7 @@ func playChapters(story Story, sc *bufio.Scanner) error {
 				fmt.Printf("Please enter a number between 1 and %d.\n", len(ch.Options))
 				continue
 			}
-			start = ch.Options[choice-1].Chapter
+			currentChapter = ch.Options[choice-1].Chapter
 			break
 		}
 	}
@@ -112,34 +142,28 @@ func WithTemplate(t *template.Template) HandlerOption {
 	}
 }
 
-func WithPathFunc(fn func(r *http.Request) string) HandlerOption {
-	return func(h *handler) {
-		h.pathFn = fn
-	}
-}
-
 type handler struct {
 	s      Story
 	t      *template.Template
 	pathFn func(r *http.Request) string
 }
 
-func PathFn(base string) func(r *http.Request) string {
+func PathFn(base string, ch string) func(r *http.Request) string {
 	return func(r *http.Request) string {
 		p := strings.TrimSpace(r.URL.Path)
 		p = strings.TrimPrefix(p, base)
 		p = strings.Trim(p, "/")
 
 		if p == "" {
-			p = "intro"
+			p = ch
 		}
 
 		return p
 	}
 }
 
-func NewHandler(s Story, t *template.Template, opts ...HandlerOption) http.Handler {
-	h := handler{s, t, PathFn("/")}
+func NewHandler(s Story, t *template.Template, ch string, opts ...HandlerOption) http.Handler {
+	h := handler{s, t, PathFn("/", ch)}
 	for _, opt := range opts {
 		opt(&h)
 	}
@@ -151,7 +175,7 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if ch, ok := h.s[p]; ok {
 		if err := h.t.Execute(w, ch); err != nil {
-			log.Printf("Error executing story %s: %v", h.s["intro"], err)
+			log.Printf("Error executing story %s: %v", p, err)
 			http.Error(w, "Something went wrong...", http.StatusInternalServerError)
 		}
 		return
